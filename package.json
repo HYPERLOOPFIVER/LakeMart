@@ -12,6 +12,7 @@
   "dependencies": {
     "@expo/metro-runtime": "~5.0.4",
     "@expo/vector-icons": "^14.1.0",
+    "@react-native-community/netinfo": "^11.4.1",
     "expo": "~53.0.9",
     "expo-constants": "^17.1.6",
     "expo-status-bar": "~2.2.3",
