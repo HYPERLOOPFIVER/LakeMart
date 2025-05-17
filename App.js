@@ -1,281 +1,232 @@
 import React, { useState, useRef, useEffect } from 'react';
-import {
-  StyleSheet,
-  View,
-  Platform,
-  StatusBar,
-  ActivityIndicator,
-  Alert,
-  BackHandler,
-  SafeAreaView,
-  Text,
-  Button
-} from 'react-native';
+import { StyleSheet, View, ActivityIndicator, StatusBar, BackHandler, Platform } from 'react-native';
 import { WebView } from 'react-native-webview';
-import NetInfo from '@react-native-community/netinfo';
+import Constants from 'expo-constants';
+import * as SplashScreen from 'expo-splash-screen';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import * as NavigationBar from 'expo-navigation-bar';
+
+// Keep the splash screen visible while we fetch resources
+SplashScreen.preventAutoHideAsync();
 
 export default function App() {
-
-  const [canGoBack, setCanGoBack] = useState(false);
-  const [isConnected, setIsConnected] = useState(true);
+  const [isLoading, setIsLoading] = useState(true);
   const webViewRef = useRef(null);
-  const firstLoadRef = useRef(true);
+  const [webViewCanGoBack, setWebViewCanGoBack] = useState(false);
+  const [hasError, setHasError] = useState(false);
 
-  // Monitor internet connectivity
+  // Set navigation bar color on Android
   useEffect(() => {
-    const unsubscribe = NetInfo.addEventListener(state => {
-      setIsConnected(state.isConnected);
-    });
-    return () => unsubscribe();
+    if (Platform.OS === 'android') {
+      NavigationBar.setBackgroundColorAsync('#000000');
+      NavigationBar.setButtonStyleAsync('light');
+    }
   }, []);
 
-  // Handle Android back button
-  useEffect(() => {
-    const backAction = () => {
-      if (canGoBack && webViewRef.current) {
-        webViewRef.current.goBack();
-        return true;
-      }
-      return false;
-    };
-
-    const backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
-    return () => backHandler.remove();
-  }, [canGoBack]);
-
-  // Handle navigation state changes
-  const handleNavigationStateChange = (navState) => {
-    setCanGoBack(navState.canGoBack);
-  };
-
-  // Handle load end
-  const handleLoadEnd = () => {
-    if (firstLoadRef.current) {
-      firstLoadRef.current = false;
+  const hideLoaderAndSplash = async () => {
+    setIsLoading(false);
+    try {
+      await SplashScreen.hideAsync();
+    } catch (e) {
+      // Ignore error if splash screen is already hidden
+      console.log('SplashScreen might already be hidden', e);
     }
-    setLoading(false);
   };
+
+  // Handle back button press for Android
+  useEffect(() => {
+    if (Platform.OS === 'android') {
+      const backAction = () => {
+        if (webViewCanGoBack && webViewRef.current) {
+          webViewRef.current.goBack();
+          return true;
+        }
+        return false;
+      };
+
+      const backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
+      return () => backHandler.remove();
+    }
+  }, [webViewCanGoBack]);
+
+  // Handle network errors
+  const handleLoadError = (e) => {
+    setHasError(true);
+    setIsLoading(false);
+    console.error('WebView error:', e.nativeEvent);
+  };
+
+  // Enhanced JavaScript injection for native feel
+  const injectedJavaScript = `
+    (function() {
+      // Remove any existing margins/padding
+      document.body.style.margin = 0;
+      document.body.style.padding = 0;
+      document.documentElement.style.margin = 0;
+      document.documentElement.style.padding = 0;
+      
+      // Disable text selection and context menu for native-like experience
+      document.addEventListener('selectstart', function(e) { e.preventDefault(); });
+      document.addEventListener('contextmenu', function(e) { e.preventDefault(); });
+      
+      // Force viewport settings
+      const meta = document.querySelector('meta[name="viewport"]') || document.createElement('meta');
+      meta.name = 'viewport';
+      meta.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no';
+      if (!document.querySelector('meta[name="viewport"]')) {
+        document.getElementsByTagName('head')[0].appendChild(meta);
+      }
+      
+      // Disable touch callout and tap highlight
+      document.documentElement.style.webkitTouchCallout = 'none';
+      document.documentElement.style.webkitUserSelect = 'none';
+      document.documentElement.style.webkitTapHighlightColor = 'rgba(0,0,0,0)';
+      
+      // Disable pull-to-refresh and overscroll effects
+      document.body.style.overscrollBehavior = 'none';
+      
+      // Ensure full width/height
+      document.body.style.width = '100%';
+      document.body.style.height = '100%';
+      document.documentElement.style.width = '100%';
+      document.documentElement.style.height = '100%';
+      
+      // Fix for iOS safe areas
+      const style = document.createElement('style');
+      style.innerHTML = \`
+        body {
+          padding-top: env(safe-area-inset-top);
+          padding-bottom: env(safe-area-inset-bottom);
+          padding-left: env(safe-area-inset-left);
+          padding-right: env(safe-area-inset-right);
+        }
+        * {
+          -webkit-tap-highlight-color: transparent;
+        }
+      \`;
+      document.head.appendChild(style);
+      
+      // Force black background
+      document.body.style.backgroundColor = '#000000';
+      
+      // Intercept network errors
+      window.addEventListener('error', function(e) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'error',
+          message: e.message
+        }));
+      });
+
+      // Monitor network status
+      window.addEventListener('online', function() {
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'network',
+          status: 'online'
+        }));
+      });
+      
+      window.addEventListener('offline', function() {
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'network',
+          status: 'offline'
+        }));
+      });
+    })();
+    
+    true;
+  `;
 
   // Handle messages from WebView
-  const onMessage = (event) => {
+  const handleMessage = (event) => {
     try {
       const data = JSON.parse(event.nativeEvent.data);
-      if (data.type === 'alert') {
-        Alert.alert('Lakes Mart', data.message, [{ text: 'OK' }]);
-      } else if (data.type === 'confirm') {
-        Alert.alert('Lakes Mart', data.message, [
-          {
-            text: 'Cancel',
-            onPress: () => {
-              webViewRef.current.injectJavaScript(`window.dispatchEvent(new MessageEvent('message', { data: 'confirmResult:false' }));`);
-            },
-            style: 'cancel'
-          },
-          {
-            text: 'OK',
-            onPress: () => {
-              webViewRef.current.injectJavaScript(`window.dispatchEvent(new MessageEvent('message', { data: 'confirmResult:true' }));`);
-            }
-          }
-        ]);
+      if (data.type === 'network' && data.status === 'offline') {
+        alert('No internet connection. Please check your network settings.');
       }
-    } catch (error) {
-      console.log('Error parsing message:', error);
+    } catch (e) {
+      console.log('Invalid message from WebView', e);
     }
   };
 
-  // Render loading indicator
- 
-
-  // Render offline message
- 
-  
-
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <StatusBar
-        barStyle="dark-content"
-        backgroundColor="#ffffff"
-        translucent={false}
-      />
-
-      <View style={styles.container}>
-        {isConnected ? (
-          <>
-           
-<WebView
-  originWhitelist={['*']}
-  source={require('./assets/index.html')} // Local HTML file
-  ref={webViewRef}
-        
-              javaScriptEnabled={true}
-              domStorageEnabled={true}
-              allowsInlineMediaPlayback={true}
-            
-              startInLoadingState={true}
-              renderLoading={renderLoading}
-              scalesPageToFit={Platform.OS === 'android'}
-              useWebKit={true}
-              bounces={false}
-              scrollEnabled={true}
-              cacheEnabled={true}
-              cacheMode="LOAD_DEFAULT"
-              thirdPartyCookiesEnabled={true}
-              sharedCookiesEnabled={true}
-              style={styles.webview}
-              incognito={false}
-             
-              onNavigationStateChange={handleNavigationStateChange}
-              onError={(syntheticEvent) => {
-                const { nativeEvent } = syntheticEvent;
-                console.warn('WebView error: ', nativeEvent);
-              }}
-              onHttpError={(syntheticEvent) => {
-                const { nativeEvent } = syntheticEvent;
-                console.warn('WebView HTTP error: ', nativeEvent);
-              }}
-              onMessage={onMessage}
-              injectedJavaScript={`
-                (function() {
-                  // Fix viewport for mobile
-                  const meta = document.createElement('meta');
-                  meta.setAttribute('name', 'viewport');
-                  meta.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
-                  document.getElementsByTagName('head')[0].appendChild(meta);
-
-                  // Prevent pull-to-refresh behavior
-                  document.body.style.overscrollBehavior = 'none';
-
-                  // Make it feel like a native app by preventing selection
-                  document.body.style.userSelect = 'none';
-                  document.body.style.webkitUserSelect = 'none';
-                  document.body.style.webkitTouchCallout = 'none';
-                  document.documentElement.style.webkitUserSelect = 'none';
-                  document.documentElement.style.webkitTouchCallout = 'none';
-
-                  // Fix any overflow issues
-                  document.documentElement.style.overflow = 'auto';
-                  document.body.style.overflow = 'auto';
-
-                  // Prevent context menu on long press
-                  document.addEventListener('contextmenu', function(e) {
-                    e.preventDefault();
-                    return false;
-                  }, false);
-
-                  // Prevent dragging of elements
-                  document.addEventListener('dragstart', function(e) {
-                    e.preventDefault();
-                    return false;
-                  }, false);
-
-                  // Handle all links to prevent drag behavior
-                  function setupLinks() {
-                    const allLinks = document.querySelectorAll('a, img, button');
-                    allLinks.forEach(el => {
-                      el.style.webkitTouchCallout = 'none';
-                      el.style.webkitUserDrag = 'none';
-                      el.setAttribute('draggable', 'false');
-
-                      // Prevent default link behavior that might cause issues
-                      if (el.tagName === 'A') {
-                        el.addEventListener('touchend', function(e) {
-                          if (this.getAttribute('href') && this.getAttribute('target') !== '_blank') {
-                            e.preventDefault();
-                            window.location.href = this.getAttribute('href');
-                          }
-                        });
-                      }
-                    });
-                  }
-
-                  // Setup links on page load but avoid excessive processing
-                  let setupLinksTimeout = null;
-                  setupLinks();
-
-                  // Throttled setup for links when DOM changes (for dynamic content)
-                  const observer = new MutationObserver(function() {
-                    if (setupLinksTimeout) {
-                      clearTimeout(setupLinksTimeout);
-                    }
-                    setupLinksTimeout = setTimeout(function() {
-                      setupLinks();
-                    }, 300); // Debounce to prevent multiple executions
-                  });
-
-                  // Start observing once document is fully loaded
-                  if (document.readyState === 'complete') {
-                    observer.observe(document.body, {
-                      childList: true,
-                      subtree: true
-                    });
-                  } else {
-                    window.addEventListener('load', function() {
-                      observer.observe(document.body, {
-                        childList: true,
-                        subtree: true
-                      });
-                    });
-                  }
-
-                  // Override alert with custom implementation
-                  window.alert = function(message) {
-                    window.ReactNativeWebView.postMessage(JSON.stringify({
-                      type: 'alert',
-                      message: message
-                    }));
-                  };
-
-                  // Override confirm with custom implementation
-                  window.confirm = function(message) {
-                    return new Promise((resolve) => {
-                      window.ReactNativeWebView.postMessage(JSON.stringify({
-                        type: 'confirm',
-                        message: message
-                      }));
-
-                      const listener = (event) => {
-                        if (event.data === 'confirmResult:true') {
-                          resolve(true);
-                          window.removeEventListener('message', listener);
-                        } else if (event.data === 'confirmResult:false') {
-                          resolve(false);
-                          window.removeEventListener('message', listener);
-                        }
-                      };
-
-                      window.addEventListener('message', listener);
-                    });
-                  };
-
-                  true;
-                })();
-              `}
-            />
-            {loading && renderLoading()}
-          </>
+    <SafeAreaProvider>
+      <StatusBar barStyle="light-content" backgroundColor="#000000" translucent={false} />
+      <View style={styles.fullScreen}>
+        {hasError ? (
+          <View style={styles.errorContainer}>
+            <ActivityIndicator size="large" color="#FFFFFF" />
+            <View style={styles.errorTextContainer}>
+              <Text style={styles.errorText}>
+                Unable to connect to the server. Please check your internet connection.
+              </Text>
+            </View>
+          </View>
         ) : (
-          renderOffline()
+          <WebView
+            ref={webViewRef}
+            source={{ uri: 'https://shoptorder.netlify.app' }}
+            style={styles.webview}
+            onError={handleLoadError}
+            injectedJavaScript={injectedJavaScript}
+            javaScriptEnabled={true}
+            domStorageEnabled={true}
+            startInLoadingState={true}
+            scalesPageToFit={false}
+            onLoad={hideLoaderAndSplash}
+            onLoadStart={() => setIsLoading(true)}
+            onLoadEnd={() => setIsLoading(false)}
+            onMessage={handleMessage}
+            onNavigationStateChange={(navState) => {
+              setWebViewCanGoBack(navState.canGoBack);
+            }}
+            renderLoading={() => (
+              <View style={styles.loaderContainer}>
+                <ActivityIndicator size="large" color="#FFFFFF" />
+              </View>
+            )}
+            bounces={false}
+            showsHorizontalScrollIndicator={false}
+            showsVerticalScrollIndicator={false}
+            allowsBackForwardNavigationGestures={false}
+            pullToRefreshEnabled={false}
+            overScrollMode="never"
+            mixedContentMode="compatibility"
+            setSupportMultipleWindows={false}
+            thirdPartyCookiesEnabled={true}
+            sharedCookiesEnabled={true}
+            textZoom={100}
+            allowsInlineMediaPlayback={true}
+            mediaPlaybackRequiresUserAction={false}
+            originWhitelist={['*']} // Allow all origins
+            onShouldStartLoadWithRequest={(request) => {
+              // Allow all URLs to load
+              return true;
+            }}
+            cacheEnabled={true}
+            cacheMode="LOAD_DEFAULT"
+            useWebKit={true}
+          />
+        )}
+        {isLoading && !hasError && (
+          <View style={styles.loaderContainer}>
+            <ActivityIndicator size="large" color="#FFFFFF" />
+          </View>
         )}
       </View>
-    </SafeAreaView>
+    </SafeAreaProvider>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
+  fullScreen: {
     flex: 1,
-    backgroundColor: '#ffffff',
-  },
-  container: {
-    flex: 1,
-    backgroundColor: '#ffffff',
+    backgroundColor: '#000000',
   },
   webview: {
     flex: 1,
-    backgroundColor: '#ffffff',
+    backgroundColor: '#000000',
   },
-  loadingContainer: {
+  loaderContainer: {
     position: 'absolute',
     top: 0,
     left: 0,
@@ -283,15 +234,21 @@ const styles = StyleSheet.create({
     bottom: 0,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.8)',
+    backgroundColor: '#000000',
   },
-  offlineContainer: {
+  errorContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: '#000000',
+    padding: 20,
   },
-  offlineText: {
-    fontSize: 18,
-    marginBottom: 10,
+  errorTextContainer: {
+    marginTop: 20,
   },
+  errorText: {
+    color: '#FFFFFF',
+    textAlign: 'center',
+    fontSize: 16,
+  }
 });
